@@ -226,8 +226,8 @@ index_returns <- index_price %>%
 
 benchmark_portfolio <- function(return, x1, x2, x3) {
 
-end_pos <- max(which(!is.na(return)))
-y_actual <- return[(end_pos - 9):end_pos]
+end_pos <- max(which(!is.na(return)))       #find the latest year with available return data
+y_actual <- return[(end_pos - 9):end_pos]   #use only the last 10 years (with available return data) to create the benchmark
 x1 <- x1[(end_pos - 9):end_pos]
 x2 <- x2[(end_pos - 9):end_pos]
 x3 <- x3[(end_pos - 9):end_pos]
