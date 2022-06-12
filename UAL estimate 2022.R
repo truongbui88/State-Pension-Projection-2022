@@ -228,15 +228,17 @@ benchmark_portfolio <- function(return, x1, x2, x3) {
 
 end_pos <- max(which(!is.na(return)))       #find the latest year with available return data
 y_actual <- return[(end_pos - 9):end_pos]   #use only the last 10 years (with available return data) to create the benchmark
+x0 <- 1                                     #for the intercept (alpha)
 x1 <- x1[(end_pos - 9):end_pos]
 x2 <- x2[(end_pos - 9):end_pos]
 x3 <- x3[(end_pos - 9):end_pos]
-x = cbind(x1, x2, x3)
+x = cbind(x0, x1, x2, x3)
 
 Dmat <- crossprod(x)
-dvec <- crossprod(y_actual, x)     # vector to be minimized: product:transpose y_actual and x
-Amat <- cbind(rep(1,3), diag(3))   # vector defining constraint
-bvec <- c(1,0,0,0)                 # vector of b coefficient; meq = 1 is equality constraint: coefs sum to 1  
+dvec <- crossprod(y_actual, x)                  # vector to be minimized: product:transpose y_actual and x
+# Amat <- cbind(rep(1,3), diag(3))   
+Amat <- t(cbind(0, rbind(rep(1,3), diag(3))))   # matrix defining the constraints
+bvec <- c(1,0,0,0)                              # vector of b coefficient; meq = 1 is equality constraint: coefs sum to 1  
 
 result <- solve.QP(Dmat = Dmat, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1) 
 
@@ -249,16 +251,17 @@ ppd_benchmark <- ppd_project %>%
   left_join(index_returns) %>% 
   group_by(plan_name) %>% 
   mutate(benchmark = benchmark_portfolio(return, acwi_exUS, IWV, VBTIX),
-         benchmark_return = benchmark[[1]][1]*acwi_exUS + benchmark[[1]][2]*IWV + benchmark[[1]][3]*VBTIX) %>% 
+         benchmark_return = benchmark[[1]][2]*acwi_exUS + benchmark[[1]][3]*IWV + benchmark[[1]][4]*VBTIX,
+         predict_return = benchmark[[1]][1] + benchmark[[1]][2]*acwi_exUS + benchmark[[1]][3]*IWV + benchmark[[1]][4]*VBTIX) %>% 
   ungroup()
 
 
 #Custom functions to project return, aal, and mva
 #return function
-return_f <- function(return, benchmark_return, fy, proj_return) {  
+return_f <- function(return, predict_return, fy, proj_return) {  
   for (i in 2:length(return)) {
     if (is.na(return[i]) && fy[i] <= current_fy) {   #if returns are missing in current or previous fy, use the benchmark returns
-      return[i] <- benchmark_return[i]
+      return[i] <- predict_return[i]
     } else if (fy[i] > current_fy) {
       return[i] <- proj_return
     }
@@ -293,7 +296,7 @@ return_2022 <- 0   #input the expected 2022 return here (currently default to 0%
 ppd_project_final <- ppd_project %>% 
   left_join(ppd_benchmark) %>% 
   group_by(plan_name) %>% 
-  mutate(return = return_f(return, benchmark_return, fy, proj_return = return_2022),
+  mutate(return = return_f(return, predict_return, fy, proj_return = return_2022),
          aal = aal_f(aal, arr, payroll, nc, ben_pay),
          mva = mva_f(mva, return, payroll, cont_rate, ben_pay)) %>% 
   mutate(ual = aal - mva, 
