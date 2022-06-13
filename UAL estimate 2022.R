@@ -13,6 +13,10 @@ library(rio)
 ppd_full <- read.csv("ppd-data-latest-05-2022.csv") 
 # reason_data <- read_excel("StateDataFiltered_2001-2021.xlsx")
 
+#Import index returns data
+index_returns <- read.csv("./Index returns data/index_returns.csv")
+
+
 #Specify fiscal years
 pre_fy <- 2020
 current_fy <- 2021
@@ -169,55 +173,7 @@ ppd_project <- ppd %>%
   ungroup()
 
 
-#Create synthetic benchmark portfolios to predict returns in missing years with 3 indexes
-#Get MSCI ACWI ex US Index
-acwi_exUS <- read_excel("acwi_exUS_price_net.xls", skip = 6)
-
-acwi_exUS_price <- acwi_exUS %>%  
-  slice(1:253) %>% # last few rows are not numbers
-  rename(acwi_exUS = `ACWI ex USA Standard (Large+Mid Cap)`,
-         date = Date) %>% 
-  mutate(acwi_exUS = as.numeric(acwi_exUS),
-         date = mdy(date),
-         month = month(date),
-         fy = year(date)) %>% 
-  select(-date)
-
-#Get iShares Russell 3000 ETF (IWV) and Vanguard Total Bond Market Index Fund Institutional Shares (VBTIX) prices
-symbols <- c("IWV", "VBTIX")
-
-prices <- getSymbols(symbols,
-                     src = "yahoo",
-                     from = "1998-12-31",
-                     to = "2022-01-01",
-                     auto.assign = T,
-                     warnings = F) %>% 
-  map(~Ad(get(.))) %>% 
-  reduce(merge) %>% 
-  `colnames<-`(symbols)
-
-prices_monthly <- to.monthly(prices, OHLC = F)    #get monthly prices
-
-#Add MSCI ACWI ex-US prices
-index_price <- prices_monthly %>% 
-  data.frame(date = index(.)) %>% 
-  remove_rownames() %>% 
-  mutate(fy = year(date), month = month(date)) %>% 
-  left_join(acwi_exUS_price) %>% 
-  select(fy, month, acwi_exUS, IWV, VBTIX)
-
-#Calculate annual returns for the individual securities
-index_returns <- index_price %>% 
-  pivot_longer(cols = 3:5,
-               names_to = "index",
-               values_to = "price") %>% 
-  arrange(index, month, fy) %>% 
-  group_by(index, month) %>% 
-  mutate(index_returns = price/lag(price) - 1) %>% 
-  select(-price) %>% 
-  pivot_wider(names_from = index, values_from = index_returns) %>% 
-  ungroup()
-
+#Create synthetic benchmark portfolios to estimate returns in missing years with 3 indexes
 
 #Function to create a synthetic benchmark portfolio using quadratic programming (to find the "best fit" benchmark portfolio)
 #See examples in the two links below:
@@ -246,7 +202,7 @@ return(list(result$solution))
 }
 
 
-#Join pension data with index returns and solve the benchmark portfolio for each plan
+#Join pension data with index returns and solve the benchmark portfolio for each plan, then use the benchmark portfolio to estimate the pension funds' returns
 ppd_benchmark <- ppd_project %>% 
   left_join(index_returns) %>% 
   group_by(plan_name) %>% 
@@ -260,7 +216,7 @@ ppd_benchmark <- ppd_project %>%
 #return function
 return_f <- function(return, predict_return, fy, proj_return) {  
   for (i in 2:length(return)) {
-    if (is.na(return[i]) && fy[i] <= current_fy) {   #if returns are missing in current or previous fy, use the benchmark returns
+    if (is.na(return[i]) && fy[i] <= current_fy) {   #if returns are missing in current or previous fy, use the returns estimated by the benchmark portfolio
       return[i] <- predict_return[i]
     } else if (fy[i] > current_fy) {
       return[i] <- proj_return
@@ -312,7 +268,7 @@ ppd_project_final <- ppd_project %>%
 # export(ppd_project_final, "ppd_project_final.xlsx")
 
 #Calculate state and national funding metrics
-ppd_project_state <- ppd_project_final %>% 
+ppd_project_state <- ppd_project_final %>%     #state
   group_by(state, fy) %>% 
   summarise(state_aal = sum(aal),
             state_mva = sum(mva),
@@ -320,7 +276,7 @@ ppd_project_state <- ppd_project_final %>%
             state_funded_ratio = state_mva/state_aal) %>% 
   ungroup()
 
-ppd_project_us <- ppd_project_final %>% 
+ppd_project_us <- ppd_project_final %>%        #national
   group_by(fy) %>% 
   summarise(us_aal = sum(aal, na.rm = T),
             us_mva = sum(mva, na.rm = T),
